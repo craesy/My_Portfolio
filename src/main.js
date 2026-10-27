@@ -104,6 +104,8 @@ function snapTerminalPopupToTop(win) {
   if (!isTerminalPopup(win)) return;
   // On mobile, popups are full-screen modals — no docking/snapping.
   if (IS_MOBILE) return;
+  // zoomed windows already fill the desktop
+  if (win.dataset.maximized) return;
 
   ensureFixedPosition(win);
 
@@ -1621,7 +1623,6 @@ function renderDirectoryListingLeft(files) {
   win.innerHTML = `
     <div class="window-header">
       <span class="dot red"></span>
-      <span class="dot yellow"></span>
       <span class="dot green"></span>
       <span class="window-title">${title}</span>
       <span class="window-close">&#10005;</span>
@@ -1670,7 +1671,6 @@ function renderDirectoryListingLeft(files) {
   win.innerHTML = `
     <div class="window-header">
       <span class="dot red"></span>
-      <span class="dot yellow"></span>
       <span class="dot green"></span>
       <span class="window-title">stuff_ive_built.js</span>
       <span class="window-close">x</span>
@@ -1706,12 +1706,238 @@ function renderDirectoryListingLeft(files) {
     }, 200);
   }
 
+  // Opening a file replaces whatever popup is on screen
   function closeExistingWindow() {
-    const existing = document.querySelector(".window");
-    if (existing) closeWindowWithAnimation(existing);
+    document
+      .querySelectorAll(".window.show")
+      .forEach((existing) => closeWindowWithAnimation(existing));
   }
 
 const MACOS_BAR_HEIGHT = 32; 
+
+/* ---------- window geometry: zoom (green button) + edge/corner resize ---------- */
+
+const WIN_ANIM_EASE = "cubic-bezier(0.22, 0.61, 0.36, 1)";
+const WIN_ZOOM_MS = 260;
+const MIN_WIN_W = 280;
+const MIN_WIN_H = 160;
+
+function setWindowRect(win, r) {
+  win.style.left = r.left + "px";
+  win.style.top = r.top + "px";
+  win.style.width = r.width + "px";
+  win.style.height = r.height + "px";
+}
+
+// Freeze an in-flight zoom/reset slide exactly where it is right now
+function stopWindowRectAnim(win) {
+  if (typeof win.stopRectAnim === "function") win.stopRectAnim();
+}
+
+function animateWindowRect(win, to, ms, onDone) {
+  stopWindowRectAnim(win);
+  void win.offsetWidth; // commit the current px rect as the start point
+
+  win.style.transition = ["left", "top", "width", "height"]
+    .map((p) => `${p} ${ms}ms ${WIN_ANIM_EASE}`)
+    .concat(["opacity 160ms ease-out", "box-shadow 160ms ease-out"])
+    .join(", ");
+  setWindowRect(win, to);
+
+  const timer = setTimeout(() => {
+    win.stopRectAnim = null;
+    win.style.transition = "";
+    if (onDone) onDone();
+  }, ms + 40);
+
+  win.stopRectAnim = () => {
+    clearTimeout(timer);
+    win.stopRectAnim = null;
+    const now = win.getBoundingClientRect();
+    win.style.transition = "";
+    setWindowRect(win, now);
+  };
+}
+
+function getMaximizedRect() {
+  const bar = document.querySelector(".macos-bar");
+  const dock = document.getElementById("dock");
+  const top = (bar ? bar.getBoundingClientRect().bottom : MACOS_BAR_HEIGHT) + 6;
+  const pad = 8;
+  // like macOS, a zoomed window stops just above the dock
+  const bottom = dock && !IS_MOBILE
+    ? dock.getBoundingClientRect().top - 6
+    : window.innerHeight - pad;
+  return {
+    left: pad,
+    top,
+    width: window.innerWidth - pad * 2,
+    height: bottom - top,
+  };
+}
+
+function clearMaximized(win) {
+  delete win.dataset.maximized;
+  win.restoreRect = null;
+}
+
+// Green button: zoom to fill the desktop, click again to restore
+function toggleMaximize(win) {
+  if (IS_MOBILE) return;
+  stopWindowRectAnim(win);
+  ensureFixedPosition(win);
+  win.classList.add("win-resized");
+  bringToFront(win);
+
+  if (win.dataset.maximized) {
+    const back = win.restoreRect;
+    clearMaximized(win);
+    if (back) animateWindowRect(win, back, WIN_ZOOM_MS);
+  } else {
+    const r = win.getBoundingClientRect();
+    win.restoreRect = { left: r.left, top: r.top, width: r.width, height: r.height };
+    win.dataset.maximized = "1";
+    animateWindowRect(win, getMaximizedRect(), WIN_ZOOM_MS);
+  }
+}
+
+// Desktop area between the menu bar and the dock (matches --desk-top/--desk-bottom)
+function getDeskArea() {
+  const bar = document.querySelector(".macos-bar");
+  const top = bar ? bar.getBoundingClientRect().bottom : MACOS_BAR_HEIGHT;
+  const reserve = IS_MOBILE
+    ? 0
+    : parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--desk-bottom")) || 84;
+  return {
+    width: Math.max(1, window.innerWidth),
+    top,
+    height: Math.max(1, window.innerHeight - reserve - top),
+  };
+}
+
+let lastDeskArea = getDeskArea();
+
+window.addEventListener("resize", () => {
+  // keep zoomed windows filling the screen as the browser is resized
+  document.querySelectorAll("[data-maximized]").forEach((win) => {
+    stopWindowRectAnim(win);
+    setWindowRect(win, getMaximizedRect());
+  });
+
+  // Terminals still in their stylesheet spot resize via vw/vh on their own.
+  // Ones the user dragged/resized hold inline px, so scale those to keep the
+  // same share of the desktop rather than getting cut off or crammed.
+  const was = lastDeskArea;
+  const now = getDeskArea();
+  lastDeskArea = now;
+  if (IS_MOBILE) return;
+
+  const sx = now.width / was.width;
+  const sy = now.height / was.height;
+  if (Math.abs(sx - 1) < 0.0005 && Math.abs(sy - 1) < 0.0005) return;
+
+  const scaleRect = (r) => ({
+    left: r.left * sx,
+    top: Math.max(now.top + 2, now.top + (r.top - was.top) * sy),
+    width: r.width * sx,
+    height: r.height * sy,
+  });
+
+  document.querySelectorAll(".terminal-window[data-drag-init]").forEach((win) => {
+    if (win.restoreRect) win.restoreRect = scaleRect(win.restoreRect);
+    // zoomed ones were refitted above; mid-animation ones finish on their own
+    if (win.dataset.maximized || win.stopRectAnim) return;
+
+    const r = {
+      left: parseFloat(win.style.left),
+      top: parseFloat(win.style.top),
+      width: parseFloat(win.style.width),
+      height: parseFloat(win.style.height),
+    };
+    if (Object.values(r).some((v) => !Number.isFinite(v))) return;
+    setWindowRect(win, scaleRect(r));
+  });
+});
+
+function startWindowResize(e, win, dir) {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  e.stopPropagation();
+
+  stopWindowRectAnim(win);
+  ensureFixedPosition(win);
+  clearMaximized(win);
+  win.classList.add("win-resized");
+  bringToFront(win);
+
+  const handle = e.currentTarget;
+  const pid = e.pointerId;
+  const start = win.getBoundingClientRect();
+  const sx = e.clientX;
+  const sy = e.clientY;
+  // windows already narrower/shorter than the minimum can't snap bigger on grab
+  const minW = Math.min(MIN_WIN_W, start.width);
+  const minH = Math.min(MIN_WIN_H, start.height);
+  const minTop = Math.min(start.top, MACOS_BAR_HEIGHT + 2);
+  const minLeft = Math.min(start.left, 0);
+  const maxW = Math.max(window.innerWidth - start.left, start.width);
+  const maxH = Math.max(window.innerHeight - start.top, start.height);
+
+  try { handle.setPointerCapture(pid); } catch (_) {}
+  document.body.style.cursor = getComputedStyle(handle).cursor;
+  document.body.classList.add("win-resizing");
+
+  const onMove = (ev) => {
+    const dx = ev.clientX - sx;
+    const dy = ev.clientY - sy;
+    let left = start.left;
+    let top = start.top;
+    let width = start.width;
+    let height = start.height;
+
+    if (dir.includes("e")) width = Math.min(Math.max(start.width + dx, minW), maxW);
+    if (dir.includes("s")) height = Math.min(Math.max(start.height + dy, minH), maxH);
+    if (dir.includes("w")) {
+      left = Math.min(Math.max(start.left + dx, minLeft), start.right - minW);
+      width = start.right - left;
+    }
+    if (dir.includes("n")) {
+      top = Math.min(Math.max(start.top + dy, minTop), start.bottom - minH);
+      height = start.bottom - top;
+    }
+
+    setWindowRect(win, { left, top, width, height });
+  };
+
+  const onUp = () => {
+    handle.removeEventListener("pointermove", onMove);
+    handle.removeEventListener("pointerup", onUp);
+    handle.removeEventListener("pointercancel", onUp);
+    try { handle.releasePointerCapture(pid); } catch (_) {}
+    document.body.classList.remove("win-resizing");
+    document.body.style.cursor = "";
+  };
+
+  handle.addEventListener("pointermove", onMove);
+  handle.addEventListener("pointerup", onUp);
+  handle.addEventListener("pointercancel", onUp);
+}
+
+function addResizeHandles(win) {
+  if (IS_MOBILE || win.dataset.resizable) return;
+  win.dataset.resizable = "1";
+
+  ["n", "s", "e", "w", "ne", "nw", "se", "sw"].forEach((dir) => {
+    const h = document.createElement("div");
+    h.className = `win-resize win-resize-${dir}`;
+    h.addEventListener("pointerdown", (e) => startWindowResize(e, win, dir));
+    // swallow the click that follows a resize so it doesn't trigger snap-to-top
+    h.addEventListener("click", (e) => e.stopPropagation());
+    win.appendChild(h);
+  });
+}
+
+const dockEl = document.getElementById("dock");
 
 function makeDraggable(win) {
   const contentWindow = isContentWindow(win);
@@ -1743,6 +1969,7 @@ function makeDraggable(win) {
       if (
         e.button !== 0 ||
         e.target.closest(".window-close") ||
+        e.target.closest(".dot") ||
         e.target.tagName === "INPUT" ||
         e.target.tagName === "TEXTAREA" ||
         e.target.isContentEditable
@@ -1754,6 +1981,9 @@ function makeDraggable(win) {
 
       isPointerDown = true;
       hasDragged = false;
+
+      // grabbed mid zoom / "return home" slide → freeze it and drag from there
+      stopWindowRectAnim(win);
 
       bringToFront(win);
 
@@ -1782,6 +2012,7 @@ function makeDraggable(win) {
     if (!hasDragged) {
       hasDragged = true;
       ensureFixedPosition(win);
+      clearMaximized(win); // dragging a zoomed window keeps its size but un-zooms it
       const rect = win.getBoundingClientRect();
       baseLeft = rect.left;
       baseTop = rect.top;
@@ -1825,6 +2056,17 @@ function onUp() {
       snapTerminalPopupToTop(win);
     });
   }
+
+  // Green traffic light → zoom / restore
+  const zoomBtn = header && header.querySelector(".dot.green");
+  if (zoomBtn) {
+    zoomBtn.addEventListener("click", (e) => {
+      e.stopPropagation(); // don't trigger snap-to-top
+      toggleMaximize(win);
+    });
+  }
+
+  addResizeHandles(win);
 
   // Initial z-order
   bringToFront(win);
@@ -1903,6 +2145,49 @@ function onUp() {
     }, delay);
   }
 
+  // Re-clicking portfolio.app slides any moved/resized/zoomed terminal window
+  // back to its CSS home, then drops the inline px so it stays responsive.
+  const TERMINAL_RESET_MS = 420;
+  const DRAG_OVERRIDE_PROPS = ["position", "left", "top", "width", "height", "margin", "transform"];
+
+  function resetTerminalWindow(win) {
+    if (!win) return;
+
+    if (!win.dataset.dragInit) return; // never moved → already home
+    stopWindowRectAnim(win);
+
+    const from = win.getBoundingClientRect();
+
+    // measure the stylesheet position by briefly removing the overrides
+    DRAG_OVERRIDE_PROPS.forEach((p) => win.style.removeProperty(p));
+    win.classList.remove("win-resized");
+    clearMaximized(win);
+    const to = win.getBoundingClientRect();
+
+    const backToCss = () => {
+      DRAG_OVERRIDE_PROPS.forEach((p) => win.style.removeProperty(p));
+      delete win.dataset.dragInit;
+    };
+
+    if (
+      Math.abs(from.left - to.left) < 1 &&
+      Math.abs(from.top - to.top) < 1 &&
+      Math.abs(from.width - to.width) < 1 &&
+      Math.abs(from.height - to.height) < 1
+    ) {
+      backToCss();
+      return;
+    }
+
+    setWindowRect(win, from);
+    animateWindowRect(win, to, TERMINAL_RESET_MS, backToCss);
+  }
+
+  function resetTerminalWindows() {
+    [".terminal-window-left", ".side-terminal-top", ".side-terminal-bottom"]
+      .forEach((sel) => resetTerminalWindow(document.querySelector(sel)));
+  }
+
 
   function launchApp() {
     if (launchInitiated) return;
@@ -1938,117 +2223,313 @@ function onUp() {
     if (appIcon && !IS_MOBILE) {
       appIcon.style.zIndex = "1";
     }
+
+    // however it was opened, the dock icon bounces and gets its running dot
+    const dockApp = document.getElementById("dock-portfolio");
+    if (dockApp) {
+      bounceDockItem(dockApp);
+      dockApp.classList.add("is-running");
+    }
   }
 
 
-    function makeIconDraggable(icon) {
-  if (!icon) return;
+  // ===================== DESKTOP ICON (Finder-style) =====================
+  // Like the macOS desktop: mousedown selects (grey box + blue label, greyed
+  // out once something else is focused); dragging leaves the icon where it is
+  // and moves a translucent copy with the cursor; dropping on the desktop
+  // moves it there (nudged back inside the desktop area if needed); drops the
+  // desktop can't take (dock apps, menu bar, windows, Esc) slide back home.
+  // Rubber-banding the empty desktop selects too, and ⌘⌫ "moves to Trash".
+  function makeIconDraggable(icon) {
+    if (!icon) return;
 
-  let isDown = false;
-  let hasDragged = false;
-  let startX = 0;
-  let startY = 0;
-  let baseLeft = 0;
-  let baseTop = 0;
-  const DRAG_THRESHOLD = 3;
+    const DRAG_THRESHOLD = 3;
+    const EDGE_PAD = 4;
+    const SLIDE_BACK_MS = 280;
+    const DESKTOP_BG = "html, body, main, .main, .main_img, .intro, .right";
+    const REJECT_DROP = ".dock, .macos-bar, .terminal-window, .window, .win98-overlay";
+    const image = icon.querySelector(".desktop-icon-image") || icon;
+    const label = icon.querySelector(".desktop-icon-label") || icon;
+    const desktopLayer = icon.closest(".main") || document.body;
 
+    // ---------- selection ----------
+    function select() {
+      icon.classList.add("is-selected");
+      icon.classList.remove("is-inactive");
+    }
+    function deselect() {
+      icon.classList.remove("is-selected", "is-inactive");
+    }
+    function deactivate() {
+      if (icon.classList.contains("is-selected")) icon.classList.add("is-inactive");
+    }
 
-  
+    // ---------- geometry ----------
+    function unionRect(...els) {
+      const rs = els.map((el) => el.getBoundingClientRect());
+      return {
+        left: Math.min(...rs.map((r) => r.left)),
+        top: Math.min(...rs.map((r) => r.top)),
+        right: Math.max(...rs.map((r) => r.right)),
+        bottom: Math.max(...rs.map((r) => r.bottom)),
+      };
+    }
 
-  function animateTo(x, y, ms = 260) {
-    icon.style.transition = `left ${ms}ms cubic-bezier(0.22,0.61,0.36,1), top ${ms}ms cubic-bezier(0.22,0.61,0.36,1)`;
-    requestAnimationFrame(() => {
+    // usable desktop: below the menu bar, above the dock
+    function desktopFrame() {
+      const bar = document.querySelector(".macos-bar");
+      const top = (bar ? bar.getBoundingClientRect().bottom : 32) + EDGE_PAD;
+      let bottom = window.innerHeight - EDGE_PAD;
+      const dock = dockEl && dockEl.getBoundingClientRect();
+      if (dock && dock.height) bottom = Math.min(bottom, dock.top - EDGE_PAD);
+      return { left: EDGE_PAD, top, right: window.innerWidth - EDGE_PAD, bottom };
+    }
+
+    // box position that keeps the whole artwork + label on the desktop
+    // (the 85px artwork overhangs the 72px box)
+    function clampToDesktop(left, top) {
+      const box = icon.getBoundingClientRect();
+      const vis = unionRect(icon, image, label);
+      const f = desktopFrame();
+      const x = Math.min(Math.max(left, f.left - (vis.left - box.left)), f.right - (vis.right - box.left));
+      const y = Math.min(Math.max(top, f.top - (vis.top - box.top)), f.bottom - (vis.bottom - box.top));
+      return { x, y };
+    }
+
+    function placeIcon(x, y) {
+      icon.style.position = "fixed";
+      icon.style.right = "auto";
+      icon.style.bottom = "auto";
+      icon.style.transition = "";
       icon.style.left = x + "px";
       icon.style.top = y + "px";
+      icon.dataset.placed = "1";
+    }
+
+    function overTrash(x, y) {
+      if (!trashBin) return false;
+      const t = trashBin.getBoundingClientRect();
+      return x >= t.left && x <= t.right && y >= t.top && y <= t.bottom;
+    }
+
+    // ---------- drag ----------
+    let press = null;
+    let ghost = null;
+
+    icon.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      if (document.activeElement && document.activeElement !== document.body) {
+        document.activeElement.blur?.();
+      }
+
+      select();
+      iconWasDragged = false;
+
+      const r = icon.getBoundingClientRect();
+      press = {
+        x: e.clientX,
+        y: e.clientY,
+        grabX: e.clientX - r.left,
+        grabY: e.clientY - r.top,
+        dragging: false,
+      };
+
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+      document.addEventListener("keydown", onDragKey);
+      window.addEventListener("blur", cancelDrag);
     });
-    const cleanup = () => {
-      icon.style.transition = "";
-      icon.removeEventListener("transitionend", cleanup);
-    };
-    icon.addEventListener("transitionend", cleanup);
-  }
 
-  icon.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
+    function startDrag() {
+      press.dragging = true;
+      iconWasDragged = true;
 
-    isDown = true;
-    hasDragged = false;
-
-    const rect = icon.getBoundingClientRect();
-    icon.style.position = "fixed";
-    icon.style.left = rect.left + "px";
-    icon.style.top = rect.top + "px";
-
-    baseLeft = rect.left;
-    baseTop = rect.top;
-    startX = e.clientX;
-    startY = e.clientY;
-
-    icon.classList.add("is-dragging");
-
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  });
-
-  function onMove(e) {
-    if (!isDown) return;
-
-    const dx = e.clientX - startX;
-    const dy = e.clientY - startY;
-    const distSq = dx * dx + dy * dy;
-
-    if (!hasDragged && distSq < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
-    hasDragged = true;
-
-    let newLeft = baseLeft + dx;
-    let newTop = baseTop + dy;
-
-    const padding = 10;
-    const maxLeft = window.innerWidth - icon.offsetWidth - padding;
-    const maxTop = window.innerHeight - icon.offsetHeight - padding;
-
-    if (newLeft < padding) newLeft = padding;
-    if (newLeft > maxLeft) newLeft = maxLeft;
-    if (newTop < padding) newTop = padding;
-    if (newTop > maxTop) newTop = maxTop;
-
-    icon.style.left = newLeft + "px";
-    icon.style.top = newTop + "px";
-
-    // hover state for bin
-    if (trashBin) {
-      const iconRect = icon.getBoundingClientRect();
-      const trashRect = trashBin.getBoundingClientRect();
-      trashBin.classList.toggle("trash-hover", rectsOverlap(iconRect, trashRect));
+      ghost = icon.cloneNode(true);
+      ghost.removeAttribute("id");
+      ghost.removeAttribute("style");
+      ghost.classList.remove("is-inactive");
+      ghost.classList.add("desktop-icon-ghost");
+      ghost.setAttribute("aria-hidden", "true");
+      document.body.appendChild(ghost);
+      document.body.classList.add("icon-dragging");
     }
-  }
 
-  function onUp() {
-    isDown = false;
-    document.removeEventListener("mousemove", onMove);
-    document.removeEventListener("mouseup", onUp);
+    function onMove(e) {
+      if (!press) return;
+      if (!press.dragging) {
+        const dx = e.clientX - press.x;
+        const dy = e.clientY - press.y;
+        if (dx * dx + dy * dy < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
+        startDrag();
+      }
 
-    // clear hover highlight
-    if (trashBin) trashBin.classList.remove("trash-hover");
+      // the copy tracks the cursor 1:1, anywhere on screen (incl. over the dock)
+      ghost.style.transform = `translate3d(${e.clientX - press.grabX}px, ${e.clientY - press.grabY}px, 0)`;
+      trashBin?.classList.toggle("trash-hover", overTrash(e.clientX, e.clientY));
+    }
 
-    // Only treat as a "drop" if it was actually dragged
-    if (!hasDragged) return;
-    if (!trashBin) return;
+    function endPress() {
+      press = null;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.removeEventListener("keydown", onDragKey);
+      window.removeEventListener("blur", cancelDrag);
+      trashBin?.classList.remove("trash-hover");
+      document.body.classList.remove("icon-dragging");
+    }
 
-    const iconRect = icon.getBoundingClientRect();
-    const trashRect = trashBin.getBoundingClientRect();
+    // refused drop: the copy glides back onto the original, then vanishes
+    function slideBack(g) {
+      const home = icon.getBoundingClientRect();
+      const anim = g.animate(
+        [
+          { transform: g.style.transform || "none" },
+          { transform: `translate3d(${home.left}px, ${home.top}px, 0)` },
+        ],
+        { duration: SLIDE_BACK_MS, easing: "cubic-bezier(0.25, 0.8, 0.3, 1)", fill: "forwards" }
+      );
+      anim.onfinish = () => g.remove();
+      anim.oncancel = () => g.remove();
+    }
 
-    if (rectsOverlap(iconRect, trashRect)) {
-      // 1) pop Win98-style error
+    function cancelDrag() {
+      const g = ghost;
+      ghost = null;
+      endPress();
+      if (g) slideBack(g);
+    }
+
+    function onDragKey(e) {
+      if (e.key !== "Escape" || !ghost) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cancelDrag();
+    }
+
+    function onUp(e) {
+      const p = press;
+      const g = ghost;
+      ghost = null;
+      endPress();
+      if (!p || !p.dragging || !g) return;
+
+      // Trash: Clippy steps in and the icon goes back where it was
+      if (overTrash(e.clientX, e.clientY)) {
+        showTrashError();
+        slideBack(g);
+        return;
+      }
+
+      // the copy ignores the pointer, so this is whatever is under the cursor
+      const target = document.elementFromPoint(e.clientX, e.clientY);
+      if (!target || target.closest(REJECT_DROP)) {
+        slideBack(g);
+        return;
+      }
+
+      g.remove();
+      const x = e.clientX - p.grabX;
+      const y = e.clientY - p.grabY;
+      placeIcon(x, y);
+
+      // dropped half off the desktop → it's nudged fully back on
+      const c = clampToDesktop(x, y);
+      if (Math.abs(c.x - x) > 0.5 || Math.abs(c.y - y) > 0.5) {
+        void icon.offsetWidth;
+        animateIconBack(icon, c.x, c.y);
+      }
+    }
+
+    // opening the app hands focus to its windows
+    icon.addEventListener("click", () => {
+      if (!iconWasDragged) deactivate();
+    });
+
+    // ---------- clicking elsewhere / rubber-band selection ----------
+    function startMarquee(e) {
+      const x0 = e.clientX;
+      const y0 = e.clientY;
+      let box = null;
+
+      const onMarqueeMove = (ev) => {
+        const minY = desktopFrame().top - EDGE_PAD;
+        const x1 = Math.min(Math.max(ev.clientX, 0), window.innerWidth);
+        const y1 = Math.min(Math.max(ev.clientY, minY), window.innerHeight);
+
+        if (!box) {
+          if (Math.hypot(x1 - x0, y1 - y0) < DRAG_THRESHOLD) return;
+          box = document.createElement("div");
+          box.className = "desktop-marquee";
+          desktopLayer.appendChild(box);
+        }
+
+        const r = {
+          left: Math.min(x0, x1),
+          top: Math.min(y0, y1),
+          right: Math.max(x0, x1),
+          bottom: Math.max(y0, y1),
+        };
+        box.style.left = r.left + "px";
+        box.style.top = r.top + "px";
+        box.style.width = r.right - r.left + "px";
+        box.style.height = r.bottom - r.top + "px";
+
+        if (rectsOverlap(r, unionRect(image, label))) select();
+        else deselect();
+      };
+
+      const onMarqueeUp = () => {
+        document.removeEventListener("mousemove", onMarqueeMove);
+        document.removeEventListener("mouseup", onMarqueeUp);
+        box?.remove();
+      };
+
+      document.addEventListener("mousemove", onMarqueeMove);
+      document.addEventListener("mouseup", onMarqueeUp);
+    }
+
+    document.addEventListener(
+      "mousedown",
+      (e) => {
+        const t = e.target;
+        if (!(t instanceof Element) || icon.contains(t)) return;
+
+        if (!t.matches(DESKTOP_BG)) {
+          deactivate(); // a window / the dock / the menu bar took focus
+          return;
+        }
+
+        deselect();
+        if (e.button !== 0) return;
+        e.preventDefault(); // no text selection while rubber-banding
+        if (document.activeElement && document.activeElement !== document.body) {
+          document.activeElement.blur?.();
+        }
+        startMarquee(e);
+      },
+      true
+    );
+
+    window.addEventListener("blur", deactivate);
+
+    // ⌘⌫ / Ctrl+Backspace on the selected icon = Move to Trash
+    document.addEventListener("keydown", (e) => {
+      if (!(e.metaKey || e.ctrlKey) || (e.key !== "Backspace" && e.key !== "Delete")) return;
+      if (!icon.classList.contains("is-selected") || icon.classList.contains("is-inactive")) return;
+      if (e.target instanceof Element && e.target.closest("input, textarea, select, [contenteditable]")) return;
+      e.preventDefault();
       showTrashError();
+    });
 
-      // 2) smoothly move it back to where it started
-      animateIconBack(icon, baseLeft, baseTop);
-    }
+    // shrinking the browser never strands the icon off the desktop
+    window.addEventListener("resize", () => {
+      if (!icon.dataset.placed) return;
+      const r = icon.getBoundingClientRect();
+      const c = clampToDesktop(r.left, r.top);
+      if (Math.abs(c.x - r.left) > 0.5 || Math.abs(c.y - r.top) > 0.5) placeIcon(c.x, c.y);
+    });
   }
-
-}
 
 
 
@@ -2214,6 +2695,77 @@ function onUp() {
     );
   }
 
+  // ===================== DOCK =====================
+  function bounceDockItem(item) {
+    if (!item) return;
+    item.classList.remove("is-bouncing");
+    void item.offsetWidth;
+    item.classList.add("is-bouncing");
+  }
+
+  function setupDock() {
+    if (!dockEl) return;
+
+    // launching an app bounces its icon, like macOS
+    dockEl.querySelectorAll(".dock-app").forEach((app) => {
+      app.addEventListener("click", () => bounceDockItem(app));
+    });
+    dockEl.addEventListener("animationend", (e) => {
+      if (e.animationName === "dock-bounce") {
+        e.target.closest(".dock-item")?.classList.remove("is-bouncing");
+      }
+    });
+
+    // portfolio.app: launches the first time (launchApp bounces it), after
+    // that it brings the terminals back, same as the desktop icon
+    document.getElementById("dock-portfolio")?.addEventListener("click", () => {
+      if (!launchInitiated) launchApp();
+      else if (IS_MOBILE) openTerminalAppMobile?.();
+      else resetTerminalWindows();
+    });
+
+    if (IS_MOBILE) return;
+
+    // magnification: icons swell with a smooth falloff around the cursor
+    const MAX_SCALE = 1.55;
+    const RANGE = 150;
+    let mouseX = null;
+    let raf = 0;
+
+    function magnify() {
+      raf = 0;
+      const base = parseFloat(getComputedStyle(dockEl).getPropertyValue("--dock-size")) || 54;
+      const items = Array.from(dockEl.querySelectorAll(".dock-item"));
+      const centers = items.map((it) => {
+        const r = it.getBoundingClientRect();
+        return r.left + r.width / 2;
+      });
+      items.forEach((it, i) => {
+        if (mouseX === null) {
+          it.style.removeProperty("--s");
+          return;
+        }
+        const t = Math.max(0, 1 - Math.abs(mouseX - centers[i]) / RANGE);
+        const f = (1 - Math.cos(Math.PI * t)) / 2;
+        it.style.setProperty("--s", `${base * (1 + (MAX_SCALE - 1) * f)}px`);
+      });
+    }
+
+    function schedule() {
+      if (!raf) raf = requestAnimationFrame(magnify);
+    }
+    dockEl.addEventListener("mousemove", (e) => {
+      mouseX = e.clientX;
+      schedule();
+    });
+    dockEl.addEventListener("mouseleave", () => {
+      mouseX = null;
+      schedule();
+    });
+  }
+
+  setupDock();
+
 let iconWasDragged = false;
 
 if (appIcon) {
@@ -2230,7 +2782,8 @@ if (appIcon) {
         return;
       }
 
-      launchApp();
+      if (launchInitiated) resetTerminalWindows();
+      else launchApp();
     });
   }
 } else {

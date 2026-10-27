@@ -14,7 +14,7 @@
     <div class="macos-bar">
       <div class="macos-left">
         <span class="macos-apple"></span>
-        <span class="macos-item macos-active">Zade</span>
+        <a href="https://tuazad.com" style="text-decoration: none; color:black; cursor:grab; " target="_blank"><span class="macos-item macos-active">Zade</span></a>
       </div>
       <div class="macos-right">
         <div class="macos-time-con">
@@ -30,17 +30,10 @@
           <div class="desktop-icon-image"></div>
           <div class="desktop-icon-label">portfolio.app</div>
         </div>
-        <div class="desktop-icon desktop-trash" id="trash-bin">
-          <div class="bin-icon-image"></div>
-          <div class="desktop-icon-label">Trash</div>
-        </div>
         <div class="main_img"></div>
         <div class="intro">
           <div class="terminal-window terminal-window-left">
             <div class="terminal-header">
-              <span class="dot red"></span>
-              <span class="dot yellow"></span>
-              <span class="dot green"></span>
               <span class="terminal-title">zade@tuaima — ~/welcome</span>
             </div>
             <div class="terminal-body intro_con">
@@ -66,9 +59,6 @@
           <!-- TOP-RIGHT: ABOUT TERMINAL -->
           <div class="terminal-window side-terminal side-terminal-top">
             <div class="terminal-header">
-              <span class="dot red"></span>
-              <span class="dot yellow"></span>
-              <span class="dot green"></span>
               <span class="terminal-title">about-zade — ~/</span>
             </div>
             <div class="terminal-body about_con terminal-body-topright">
@@ -94,9 +84,6 @@
           <!-- BOTTOM-RIGHT: ACTIVITY / LOG TERMINAL -->
           <div class="terminal-window side-terminal side-terminal-bottom">
             <div class="terminal-header">
-              <span class="dot red"></span>
-              <span class="dot yellow"></span>
-              <span class="dot green"></span>
               <span class="terminal-title">activity-log — ~/welcome</span>
             </div>
             <div class="terminal-body log_con">
@@ -454,6 +441,48 @@
         </section>
       </div>
     </main>
+
+    <!-- macOS dock: apps · separator · Trash -->
+    <nav class="dock" id="dock" aria-label="Dock">
+      <button class="dock-item dock-portfolio" id="dock-portfolio" type="button" data-label="portfolio.app" aria-label="portfolio.app">
+        <span class="dock-icon dock-portfolio-icon"></span>
+      </button>
+      <a class="dock-item dock-app" href="https://www.instagram.com/zadelikesmakingthings" target="_blank" rel="noopener" data-label="Instagram" aria-label="Instagram">
+        <span class="dock-icon">
+          <svg viewBox="0 0 64 64" aria-hidden="true">
+            <defs>
+              <radialGradient id="dock-ig-grad" cx="0.28" cy="1.08" r="1.25">
+                <stop offset="0" stop-color="#fdf497" />
+                <stop offset="0.08" stop-color="#fdf497" />
+                <stop offset="0.42" stop-color="#fd5949" />
+                <stop offset="0.62" stop-color="#d6249f" />
+                <stop offset="0.92" stop-color="#285aeb" />
+              </radialGradient>
+            </defs>
+            <rect width="64" height="64" rx="14.5" fill="url(#dock-ig-grad)" />
+            <rect x="15" y="15" width="34" height="34" rx="10" fill="none" stroke="#fff" stroke-width="4" />
+            <circle cx="32" cy="32" r="8" fill="none" stroke="#fff" stroke-width="4" />
+            <circle cx="41.8" cy="22.2" r="2.5" fill="#fff" />
+          </svg>
+        </span>
+      </a>
+      <a class="dock-item dock-app" href="https://uk.linkedin.com/in/zade-tuaima-a52520192" target="_blank" rel="noopener" data-label="LinkedIn" aria-label="LinkedIn">
+        <span class="dock-icon">
+          <svg viewBox="0 0 64 64" aria-hidden="true">
+            <rect width="64" height="64" rx="14.5" fill="#0a66c2" />
+            <g fill="#fff" transform="translate(-2 1)">
+              <circle cx="19" cy="17.5" r="4.6" />
+              <rect x="15" y="25" width="8" height="25" rx="0.8" />
+              <path d="M28 25h7.6v3.4c1.4-2.5 4.4-4.2 8.2-4.2 6.3 0 9.2 3.9 9.2 11.2V50h-8V37.9c0-3.6-1.2-5.6-4.3-5.6-3.3 0-5 2.4-5 6.1V50H28z" />
+            </g>
+          </svg>
+        </span>
+      </a>
+      <span class="dock-separator" aria-hidden="true"></span>
+      <div class="dock-item dock-trash" id="trash-bin" data-label="Trash">
+        <span class="dock-icon bin-icon-image"></span>
+      </div>
+    </nav>
 
     <!-- Main logic + 3D integration -->
     <script type="module" src="src/main.js"></script>
