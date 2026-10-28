@@ -636,6 +636,74 @@ body.win-resizing .terminal-body {
   padding: 0;
 }
 
+/* skills.txt: laid out like the CV, tools on the left, ways of working on
+   the right with a rule between; stacks when the window is narrow */
+.window-textedit.win-skills-content {
+  width: min(820px, 64vw);
+}
+
+.win-skills-content .window-body {
+  container-type: inline-size;
+  font-size: 1.05rem;
+  line-height: 1.45;
+}
+
+.win-skills-content .window-body h2 {
+  font-size: 1.6rem;
+  margin-bottom: 0.9rem;
+}
+
+.skills-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+}
+
+.win-skills-content .window-body .skills-col {
+  list-style: none;
+  margin: 0;
+  padding: 0 1.4rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.win-skills-content .window-body .skills-core {
+  padding: 0 0 0 1.4rem;
+  border-left: 3px solid #222;
+}
+
+.skills-col li {
+  position: relative;
+  padding-left: 1.6em;
+}
+
+.skills-col li::before {
+  content: "✱";
+  position: absolute;
+  left: 0;
+  font-weight: 700;
+}
+
+.skills-tech strong {
+  display: block;
+  font-style: italic;
+}
+
+.skills-tech span {
+  display: block;
+}
+
+@container (max-width: 520px) {
+  .skills-grid { grid-template-columns: 1fr; }
+  .win-skills-content .window-body .skills-col { padding: 0; }
+  .win-skills-content .window-body .skills-core {
+    border-left: 0;
+    border-top: 2px solid #222;
+    margin-top: 1rem;
+    padding-top: 1rem;
+  }
+}
+
 /* MP4 file styling */
 
 .window-mp4 {
@@ -1279,27 +1347,6 @@ body.icon-dragging * {
   filter: drop-shadow(0 3px 4px rgba(0, 0, 0, 0.28));
 }
 
-/* portfolio.app, first in the dock like Finder */
-.dock-portfolio-icon {
-  border-radius: 22.6%; /* same corner as the 64px SVG icons (rx 14.5) */
-  background: url("public/img/IMG_1538.jpeg") center / cover;
-  box-shadow: 0 3px 4px rgba(0, 0, 0, 0.28);
-}
-
-/* running-app dot under the icon */
-.dock-item.is-running::after {
-  content: "";
-  position: absolute;
-  bottom: -6px;
-  left: 50%;
-  width: 4px;
-  height: 4px;
-  margin-left: -2px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  pointer-events: none;
-}
-
 /* name bubble above the hovered icon */
 .dock-item::before {
   content: attr(data-label);
@@ -1375,8 +1422,7 @@ body.icon-dragging * {
   .dock-item::before,
   .dock-item::after,
   .dock-separator,
-  .dock-trash,
-  .dock-portfolio { display: none !important; } /* already on the home screen; iOS never shows an app twice */
+  .dock-trash { display: none !important; }
   .dock-icon svg { filter: none; }
   body.app-open .dock { display: none; }
 }

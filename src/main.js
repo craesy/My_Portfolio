@@ -2223,13 +2223,6 @@ function onUp() {
     if (appIcon && !IS_MOBILE) {
       appIcon.style.zIndex = "1";
     }
-
-    // however it was opened, the dock icon bounces and gets its running dot
-    const dockApp = document.getElementById("dock-portfolio");
-    if (dockApp) {
-      bounceDockItem(dockApp);
-      dockApp.classList.add("is-running");
-    }
   }
 
 
@@ -2714,14 +2707,6 @@ function onUp() {
       if (e.animationName === "dock-bounce") {
         e.target.closest(".dock-item")?.classList.remove("is-bouncing");
       }
-    });
-
-    // portfolio.app: launches the first time (launchApp bounces it), after
-    // that it brings the terminals back, same as the desktop icon
-    document.getElementById("dock-portfolio")?.addEventListener("click", () => {
-      if (!launchInitiated) launchApp();
-      else if (IS_MOBILE) openTerminalAppMobile?.();
-      else resetTerminalWindows();
     });
 
     if (IS_MOBILE) return;
